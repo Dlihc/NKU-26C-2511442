@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/">
+        <file>assets/images/player.png</file>
+        <file>assets/images/guard.png</file>
+        <file>assets/images/floor.png</file>
+        <file>assets/images/wall.png</file>
+        <file>assets/images/box.png</file>
+        <file>assets/images/goal.png</file>
+        <file>assets/images/title.png</file>
+        <file>assets/audio/bgm.wav</file>
+        <file>assets/audio/step.wav</file>
+        <file>assets/audio/alert.wav</file>
+        <file>assets/audio/suspicious.wav</file>
+        <file>assets/audio/clear.wav</file>
+    </qresource>
+</RCC>

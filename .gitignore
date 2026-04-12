@@ -1,0 +1,30 @@
+# build
+build/
+cmake-build-*/
+bin/
+debug/
+release/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# VS / VS Code
+.vs/
+.vscode/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+
+# Qt generated
+moc_*
+ui_*.h
+qrc_*.cpp
+
+# system junk
+.DS_Store
+Thumbs.db
