@@ -157,79 +157,11 @@ void GameWidget::buildLevels() {
     // Level 3: scene-authored barracks with layered patrol zones
     loadSceneLevel(":/assets/levels/level3.json");
 
-    // Level 4: drainage grid with alternating gates
-    {
-        LevelData lv;
-        lv.name = "Drainage Grid";
-        auto r = blank(72, 42);
-        carveRect(r, 1, 1, 70, 40);
-        std::array<int, 7> walls = {10, 18, 26, 34, 42, 50, 58};
-        std::array<std::pair<int,int>, 7> gaps = {{{4,8}, {30,34}, {10,14}, {24,28}, {6,10}, {32,36}, {14,18}}};
-        for (int i = 0; i < (int)walls.size(); ++i) {
-            int x = walls[i];
-            carveV(r, 4, 37, x, '#');
-            auto [a, b] = gaps[i];
-            carveRect(r, x, a, 1, b - a + 1, '.');
-            if (i % 2 == 0) carveRect(r, x, 20, 1, 3, '.');
-            else carveRect(r, x, 36, 1, 2, '.');
-        }
-        for (auto [y, x1, x2] : {std::tuple<int,int,int>{9,12,24}, {15,20,40}, {21,4,28}, {27,30,56}, {33,8,50}}) {
-            carveH(r, x1, x2, y, '#');
-            carveRect(r, (x1 + x2) / 2, y, 3, 1, '.');
-        }
-        carveRect(r, 2, 2, 8, 6, '.');
-        carveRect(r, 62, 34, 7, 5, '.');
-        place(r, 3, 3, 'S');
-        place(r, 66, 36, 'G');
-        for (auto [x, y] : {Vec2{12,8}, Vec2{13,8}, Vec2{12,9}, Vec2{13,9}, Vec2{30,14}, Vec2{31,14}, Vec2{30,15}, Vec2{31,15}, Vec2{46,22}, Vec2{47,22}, Vec2{46,23}, Vec2{47,23}, Vec2{60,30}, Vec2{61,30}, Vec2{60,31}, Vec2{61,31}})
-            place(r, x, y, 'B');
-        lv.rows = r;
-        lv.guards = {
-            G(12, 6, {{12,6},{22,6},{22,20},{12,20}}, Direction::Right, 24),
-            G(30, 10, {{30,10},{30,28},{44,28},{44,10}}, Direction::Down, 28),
-            G(60, 14, {{60,14},{60,34},{48,34},{48,14}}, Direction::Down, 34),
-            G(14, 30, {{14,30},{30,30},{30,36},{14,36}}, Direction::Right, 38),
-            G(52, 8, {{52,8},{64,8},{64,26},{52,26}}, Direction::Right, 42)
-        };
-        m_levels.push_back(lv);
-    }
+    // Level 4: scene-authored stronghold with denser patrol webs
+    loadSceneLevel(":/assets/levels/level4.json");
 
-    // Level 5: final layered core
-    {
-        LevelData lv;
-        lv.name = "Core Junction";
-        auto r = blank(72, 42);
-        carveRect(r, 1, 1, 70, 40);
-        carveRect(r, 6, 5, 60, 32, '#');
-        carveRect(r, 8, 7, 56, 28, '.');
-        for (int x : {16, 26, 36, 46, 56}) carveV(r, 8, 33, x, '#');
-        for (int y : {12, 18, 24, 30}) carveH(r, 8, 63, y, '#');
-        for (auto [x, y, w, h] : {
-                 std::tuple<int,int,int,int>{16,9,1,3}, {26,29,1,3}, {36,15,1,3}, {46,25,1,3}, {56,11,1,3},
-                 {12,12,3,1}, {30,12,3,1}, {48,12,3,1}, {20,18,3,1}, {40,18,3,1}, {58,18,3,1},
-                 {10,24,3,1}, {28,24,3,1}, {44,24,3,1}, {18,30,3,1}, {34,30,3,1}, {52,30,3,1},
-                 {6,20,3,2}, {63,22,3,2}, {31,5,4,3}, {31,34,4,3}})
-            carveRect(r, x, y, w, h, '.');
-        carveRect(r, 30, 17, 12, 8, '#');
-        carveRect(r, 33, 19, 6, 4, '.');
-        carveRect(r, 2, 2, 7, 6, '.');
-        carveRect(r, 63, 34, 6, 5, '.');
-        place(r, 3, 3, 'S');
-        place(r, 66, 36, 'G');
-        for (auto [x, y] : {Vec2{14,10}, Vec2{15,10}, Vec2{14,11}, Vec2{15,11}, Vec2{32,16}, Vec2{33,16}, Vec2{32,17}, Vec2{33,17}, Vec2{50,26}, Vec2{51,26}, Vec2{50,27}, Vec2{51,27}, Vec2{62,20}, Vec2{63,20}, Vec2{62,21}, Vec2{63,21}})
-            place(r, x, y, 'B');
-        lv.rows = r;
-        lv.guards = {
-            G(18, 8, {{18,8},{30,8},{30,16},{18,16}}, Direction::Right, 18),
-            G(40, 8, {{40,8},{52,8},{52,16},{40,16}}, Direction::Right, 22),
-            G(60, 14, {{60,14},{60,32},{48,32},{48,14}}, Direction::Down, 26),
-            G(22, 28, {{22,28},{22,34},{10,34},{10,20}}, Direction::Down, 30),
-            G(38, 28, {{38,28},{50,28},{50,20},{38,20}}, Direction::Right, 34),
-            G(30, 34, {{30,34},{34,34},{34,8},{24,8}}, Direction::Up, 38),
-            G(62, 22, {{62,22},{66,22},{66,34},{60,34}}, Direction::Right, 42)
-        };
-        m_levels.push_back(lv);
-    }
+    // Level 5: scene-authored final sector with heavier pressure
+    loadSceneLevel(":/assets/levels/level5.json");
 }
 
 void GameWidget::loadLevel(int index) {
@@ -423,7 +355,18 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
 
     if (event->key() == Qt::Key_Space && !m_playerWon && !m_playerCaught) {
         if (tileAt(m_player) == TileType::HideBox) {
-            m_playerHidden = !m_playerHidden;
+            bool threatened = false;
+            for (const auto& guard : m_guards) {
+                if (guard.mode == GuardMode::Chase || canSeePlayer(guard)) {
+                    threatened = true;
+                    break;
+                }
+            }
+            if (m_playerHidden) {
+                m_playerHidden = false;
+            } else if (!threatened) {
+                m_playerHidden = true;
+            }
             updateStatusText();
             update();
         }
@@ -599,7 +542,7 @@ void GameWidget::updateGuards() {
                 ++guard.searchIndex;
         }
 
-        guard.moveCooldown = (guard.mode == GuardMode::Chase ? 8 : 12);
+        guard.moveCooldown = (guard.mode == GuardMode::Chase ? 6 : 12);
 
         if (!m_playerHidden && m_respawnInvincibleFrames == 0) {
             const bool crossed = (guardBeforeMove == m_player && guard.pos == m_playerTickStart) ||
