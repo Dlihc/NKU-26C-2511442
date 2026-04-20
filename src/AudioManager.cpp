@@ -13,11 +13,14 @@ AudioManager::AudioManager(QObject* parent) : QObject(parent) {
     m_suspiciousEffect.setVolume(0.38f);
     m_clearEffect.setSource(QUrl("qrc:/assets/audio/clear.wav"));
     m_clearEffect.setVolume(0.38f);
+    m_levelStartEffect.setSource(QUrl("qrc:/assets/audio/level_start.wav"));
+    m_levelStartEffect.setVolume(0.30f);
 }
 void AudioManager::playBgm() { m_bgmPlayer.play(); }
 void AudioManager::stopBgm() { m_bgmPlayer.stop(); }
 void AudioManager::playStep() { m_stepEffect.play(); }
 void AudioManager::playAlert() { m_alertEffect.play(); }
 void AudioManager::playClear() { m_clearEffect.play(); }
+void AudioManager::playLevelStart() { m_levelStartEffect.play(); }
 
 void AudioManager::playSuspicious() { m_suspiciousEffect.play(); }

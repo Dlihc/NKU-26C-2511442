@@ -13,6 +13,7 @@ public:
     void playAlert();
     void playSuspicious();
     void playClear();
+    void playLevelStart();
 private:
     QMediaPlayer m_bgmPlayer;
     QAudioOutput m_bgmOutput;
@@ -20,4 +21,5 @@ private:
     QSoundEffect m_alertEffect;
     QSoundEffect m_suspiciousEffect;
     QSoundEffect m_clearEffect;
+    QSoundEffect m_levelStartEffect;
 };

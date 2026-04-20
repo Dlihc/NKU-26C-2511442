@@ -12,5 +12,9 @@
         <file>assets/audio/alert.wav</file>
         <file>assets/audio/suspicious.wav</file>
         <file>assets/audio/clear.wav</file>
+        <file>assets/audio/level_start.wav</file>
+        <file>assets/levels/level1.json</file>
+        <file>assets/levels/level2.json</file>
+        <file>assets/levels/level3.json</file>
     </qresource>
 </RCC>

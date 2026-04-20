@@ -2,6 +2,10 @@
 #include <QPainter>
 #include <QKeyEvent>
 #include <QFont>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QFile>
 #include <queue>
 #include <array>
 #include <algorithm>
@@ -29,6 +33,7 @@ QSize GameWidget::minimumSizeHint() const { return QSize(1440, 900); }
 
 void GameWidget::restartLevel() {
     loadLevel(m_currentLevel);
+    beginLevelIntro();
     update();
     updateStatusText();
 }
@@ -52,6 +57,11 @@ void GameWidget::returnToMenu() {
     loadLevel(m_menuSelectedLevel);
     update();
     updateStatusText();
+}
+
+void GameWidget::beginLevelIntro() {
+    m_introPanFrames = 96;
+    m_audio.playLevelStart();
 }
 
 void GameWidget::buildLevels() {
@@ -80,112 +90,72 @@ void GameWidget::buildLevels() {
         guard.moveCooldown = cd;
         return guard;
     };
-
-    // Level 1: cargo sectors with guarded chokepoints
-    {
+    auto parseDir = [](const QString& s) {
+        if (s == "Up") return Direction::Up;
+        if (s == "Left") return Direction::Left;
+        if (s == "Down") return Direction::Down;
+        return Direction::Right;
+    };
+    auto loadSceneLevel = [&](const QString& resPath) {
+        QFile file(resPath);
+        if (!file.open(QIODevice::ReadOnly)) return;
+        const auto doc = QJsonDocument::fromJson(file.readAll());
+        if (!doc.isObject()) return;
+        const auto obj = doc.object();
         LevelData lv;
-        lv.name = "Harbor Checkpoint";
-        auto r = blank(80, 48);
-        carveRect(r, 1, 1, 78, 46);
-        for (auto [x, y, w, h] : {
-                 std::tuple<int,int,int,int>{12,5,10,8}, {28,5,12,6}, {48,4,14,8},
-                 {16,18,12,8}, {36,16,10,12}, {54,18,12,7},
-                 {10,32,14,8}, {32,33,12,9}, {52,33,14,8}})
-            carveRect(r, x, y, w, h, '#');
-        for (auto [x, y1, y2] : {
-                 std::tuple<int,int,int>{8,8,42}, {26,2,30}, {46,10,44}, {64,2,36}})
-            carveV(r, y1, y2, x, '#');
-        for (auto [x, y, w, h] : {
-                 std::tuple<int,int,int,int>{8,14,1,4}, {8,35,1,4}, {26,8,1,4}, {26,23,1,4},
-                 {46,18,1,4}, {46,38,1,4}, {64,12,1,4}, {64,28,1,4}})
-            carveRect(r, x, y, w, h, '.');
-        for (auto [y, x1, x2] : {
-                 std::tuple<int,int,int>{14,9,25}, {28,27,45}, {30,47,63}, {22,9,15}, {40,24,45}}) {
-            carveH(r, x1, x2, y, '#');
-            carveRect(r, (x1 + x2) / 2, y, 3, 1, '.');
+        lv.name = obj.value("name").toString();
+        const int w = obj.value("width").toInt();
+        const int h = obj.value("height").toInt();
+        lv.rows.assign(h, QString(w, '.'));
+        for (int x = 0; x < w; ++x) {
+            lv.rows[0][x] = '#';
+            lv.rows[h - 1][x] = '#';
         }
-        carveRect(r, 2, 2, 5, 5, '.');
-        carveRect(r, 71, 40, 6, 5, '.');
-        place(r, 3, 3, 'S');
-        place(r, 74, 42, 'G');
-        for (auto [x, y] : {Vec2{17,14}, Vec2{18,14}, Vec2{17,15}, Vec2{18,15}, Vec2{30,27}, Vec2{31,27}, Vec2{30,28}, Vec2{31,28}, Vec2{58,30}, Vec2{59,30}, Vec2{58,31}, Vec2{59,31}, Vec2{69,39}, Vec2{70,39}})
-            place(r, x, y, 'B');
-        lv.rows = r;
-        lv.guards = {
-            G(10, 13, {{10,13},{24,13},{24,27},{10,27}}, Direction::Right, 20),
-            G(33, 14, {{33,14},{44,14},{44,30},{33,30}}, Direction::Right, 24),
-            G(51, 14, {{51,14},{62,14},{62,26},{51,26}}, Direction::Right, 28),
-            G(18, 41, {{18,41},{30,41},{30,29},{18,29}}, Direction::Right, 32),
-            G(50, 27, {{50,27},{62,27},{62,41},{50,41}}, Direction::Down, 36)
-        };
-        m_levels.push_back(lv);
-    }
-
-    // Level 2: layered warehouse rings with multiple gates
-    {
-        LevelData lv;
-        lv.name = "Warehouse Rings";
-        auto r = blank(72, 42);
-        carveRect(r, 1, 1, 70, 40);
-        carveRect(r, 6, 5, 60, 32, '#');
-        carveRect(r, 8, 7, 56, 28, '.');
-        carveRect(r, 12, 10, 48, 22, '#');
-        carveRect(r, 14, 12, 44, 18, '.');
-        carveRect(r, 18, 15, 36, 12, '#');
-        carveRect(r, 20, 17, 32, 8, '.');
-        carveRect(r, 28, 19, 16, 4, '#');
-        for (auto [x, y, w, h] : {
-                 std::tuple<int,int,int,int>{29,5,4,4}, {6,19,4,2}, {62,19,4,2}, {29,33,4,4},
-                 {12,22,4,2}, {56,14,4,2}, {18,15,2,4}, {52,23,2,4}, {24,10,4,2}, {42,30,4,2}})
-            carveRect(r, x, y, w, h, '.');
-        carveRect(r, 2, 2, 7, 6, '.');
-        carveRect(r, 63, 34, 6, 5, '.');
-        place(r, 3, 3, 'S');
-        place(r, 66, 36, 'G');
-        for (auto [x, y] : {Vec2{24,6}, Vec2{25,6}, Vec2{24,7}, Vec2{25,7}, Vec2{31,34}, Vec2{32,34}, Vec2{31,35}, Vec2{32,35}, Vec2{10,20}, Vec2{11,20}, Vec2{10,21}, Vec2{11,21}, Vec2{58,16}, Vec2{59,16}, Vec2{58,17}, Vec2{59,17}, Vec2{49,28}, Vec2{50,28}})
-            place(r, x, y, 'B');
-        lv.rows = r;
-        lv.guards = {
-            G(22, 7, {{22,7},{40,7},{40,34},{22,34}}, Direction::Right, 22),
-            G(10, 18, {{10,18},{16,18},{16,28},{10,28}}, Direction::Right, 28),
-            G(54, 14, {{54,14},{60,14},{60,28},{52,28}}, Direction::Right, 32),
-            G(34, 24, {{34,24},{46,24},{46,12},{34,12}}, Direction::Right, 36),
-            G(22, 18, {{22,18},{22,28},{48,28},{48,18}}, Direction::Down, 40)
-        };
-        m_levels.push_back(lv);
-    }
-
-    // Level 3: offset barracks blocks and long arteries
-    {
-        LevelData lv;
-        lv.name = "Barracks Grid";
-        auto r = blank(72, 42);
-        carveRect(r, 1, 1, 70, 40);
-        for (int row = 0; row < 4; ++row) {
-            int y = 5 + row * 8;
-            int shift = (row % 2) ? 2 : 0;
-            for (int x = 6 + shift; x <= 60; x += 12) carveRect(r, x, y, 8, 5, '#');
+        for (int y = 0; y < h; ++y) {
+            lv.rows[y][0] = '#';
+            lv.rows[y][w - 1] = '#';
         }
-        carveH(r, 3, 68, 20, '.');
-        carveV(r, 3, 38, 35, '.');
-        carveRect(r, 2, 2, 8, 6, '.');
-        carveRect(r, 62, 34, 7, 5, '.');
-        carveRect(r, 22, 13, 10, 6, '#');
-        carveRect(r, 40, 25, 10, 6, '#');
-        place(r, 3, 3, 'S');
-        place(r, 66, 36, 'G');
-        for (auto [x, y] : {Vec2{15,12}, Vec2{16,12}, Vec2{15,13}, Vec2{16,13}, Vec2{33,21}, Vec2{34,21}, Vec2{33,22}, Vec2{34,22}, Vec2{54,29}, Vec2{55,29}, Vec2{54,30}, Vec2{55,30}, Vec2{62,16}, Vec2{63,16}})
-            place(r, x, y, 'B');
-        lv.rows = r;
-        lv.guards = {
-            G(14, 20, {{14,20},{28,20},{28,34},{14,34}}, Direction::Right, 22),
-            G(38, 20, {{38,20},{52,20},{52,8},{38,8}}, Direction::Right, 26),
-            G(35, 10, {{35,10},{58,10},{58,20},{35,20}}, Direction::Down, 32),
-            G(6, 26, {{6,26},{34,26},{34,34},{6,34}}, Direction::Right, 36),
-            G(24, 10, {{24,10},{24,34},{52,34},{52,10}}, Direction::Down, 40)
+        auto applyRects = [&](const QJsonArray& arr, QChar c) {
+            for (const auto& v : arr) {
+                const auto a = v.toArray();
+                if (a.size() < 4) continue;
+                carveRect(lv.rows, a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(), c);
+            }
         };
+        applyRects(obj.value("walls").toArray(), '#');
+        applyRects(obj.value("cuts").toArray(), '.');
+        const auto spawn = obj.value("spawn").toArray();
+        const auto goal = obj.value("goal").toArray();
+        if (spawn.size() >= 2) place(lv.rows, spawn[0].toInt(), spawn[1].toInt(), 'S');
+        if (goal.size() >= 2) place(lv.rows, goal[0].toInt(), goal[1].toInt(), 'G');
+        for (const auto& v : obj.value("boxes").toArray()) {
+            const auto a = v.toArray();
+            if (a.size() >= 2) place(lv.rows, a[0].toInt(), a[1].toInt(), 'B');
+        }
+        for (const auto& gv : obj.value("guards").toArray()) {
+            const auto go = gv.toObject();
+            Guard g;
+            const auto pos = go.value("pos").toArray();
+            if (pos.size() >= 2) g.pos = {pos[0].toInt(), pos[1].toInt()};
+            g.facing = parseDir(go.value("facing").toString());
+            g.moveCooldown = go.value("cooldown").toInt(24);
+            for (const auto& pv : go.value("patrol").toArray()) {
+                const auto pa = pv.toArray();
+                if (pa.size() >= 2) g.patrol.push_back({pa[0].toInt(), pa[1].toInt()});
+            }
+            if (!g.patrol.empty()) lv.guards.push_back(g);
+        }
         m_levels.push_back(lv);
-    }
+    };
+
+    // Level 1: scene-authored sample level (perimeter blocked, goal room enclosed)
+    loadSceneLevel(":/assets/levels/level1.json");
+
+    // Level 2: scene-authored warehouse with denser chokepoints
+    loadSceneLevel(":/assets/levels/level2.json");
+
+    // Level 3: scene-authored barracks with layered patrol zones
+    loadSceneLevel(":/assets/levels/level3.json");
 
     // Level 4: drainage grid with alternating gates
     {
@@ -272,7 +242,7 @@ void GameWidget::loadLevel(int index) {
         for (int x = 0; x < data.rows[y].size(); ++x) {
             const QChar c = data.rows[y][x];
             if (c == '#') m_map[y][x] = TileType::Wall;
-            else if (c == 'G') m_map[y][x] = TileType::Goal;
+            else if (c == 'G') { m_map[y][x] = TileType::Goal; m_goal = {x, y}; }
             else if (c == 'B') m_map[y][x] = TileType::HideBox;
             else if (c == 'S') {
                 m_map[y][x] = TileType::Floor;
@@ -302,6 +272,7 @@ void GameWidget::loadLevel(int index) {
     m_playerWon = false;
     m_playerCaught = false;
     m_playerTickStart = m_player;
+    m_introPanFrames = 0;
 }
 
 void GameWidget::paintEvent(QPaintEvent*) {
@@ -311,8 +282,23 @@ void GameWidget::paintEvent(QPaintEvent*) {
     const QRect viewport(24, 120, width() - 48, height() - 180);
     const int mapWpx = (int)m_map[0].size() * kTileSize;
     const int mapHpx = (int)m_map.size() * kTileSize;
-    const int camX = std::clamp(m_player.x * kTileSize - viewport.width() / 2, 0, std::max(0, mapWpx - viewport.width()));
-    const int camY = std::clamp(m_player.y * kTileSize - viewport.height() / 2, 0, std::max(0, mapHpx - viewport.height()));
+    double focusX = m_player.x;
+    double focusY = m_player.y;
+    if (m_introPanFrames > 0) {
+        const int holdFrames = 24;
+        const int moveFrames = 72;
+        if (m_introPanFrames > moveFrames) {
+            focusX = m_goal.x;
+            focusY = m_goal.y;
+        } else {
+            const double t = 1.0 - (double)m_introPanFrames / (double)moveFrames;
+            const double ease = t * t * (3.0 - 2.0 * t);
+            focusX = m_goal.x * (1.0 - ease) + m_player.x * ease;
+            focusY = m_goal.y * (1.0 - ease) + m_player.y * ease;
+        }
+    }
+    const int camX = std::clamp((int)(focusX * kTileSize - viewport.width() / 2), 0, std::max(0, mapWpx - viewport.width()));
+    const int camY = std::clamp((int)(focusY * kTileSize - viewport.height() / 2), 0, std::max(0, mapHpx - viewport.height()));
 
     p.setFont(QFont("Microsoft YaHei", 10));
     p.setPen(QColor(200, 235, 200));
@@ -328,6 +314,7 @@ void GameWidget::paintEvent(QPaintEvent*) {
         p.drawText(QRect(0, 240, width(), 28), Qt::AlignCenter,
                    QString("当前选择关卡: %1 / %2 - %3").arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name));
         p.drawText(QRect(0, 272, width(), 28), Qt::AlignCenter, "按 1-5 选关，按 Enter 开始，按 Esc 回到这里");
+        p.drawText(QRect(0, 304, width(), 28), Qt::AlignCenter, "开局会先看终点，停顿一下，再切到主角位置");
         return;
     }
 
@@ -421,6 +408,7 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
             loadLevel(m_menuSelectedLevel);
             m_gameStarted = true;
             m_respawnInvincibleFrames = 120;
+            beginLevelIntro();
             update();
         }
         return;
@@ -429,6 +417,7 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
         returnToMenu();
         return;
     }
+    if (m_introPanFrames > 0) return;
     if (m_pressedKeys.contains(event->key())) return;
     m_pressedKeys.insert(event->key());
 
@@ -455,6 +444,7 @@ void GameWidget::keyReleaseEvent(QKeyEvent* event) {
 void GameWidget::tick() {
     if (!m_gameStarted) { update(); return; }
     m_playerTickStart = m_player;
+    if (m_introPanFrames > 0) { --m_introPanFrames; updateStatusText(); update(); return; }
     if (m_playerMoveCooldown > 0) --m_playerMoveCooldown;
     if (m_respawnInvincibleFrames > 0) --m_respawnInvincibleFrames;
 
@@ -480,6 +470,7 @@ void GameWidget::tick() {
         if (m_victoryFrames == 0) {
             if (m_currentLevel + 1 < (int)m_levels.size()) loadLevel(m_currentLevel + 1);
             else loadLevel(0);
+            beginLevelIntro();
         }
         updateStatusText();
         update();
@@ -792,6 +783,7 @@ QString GameWidget::alertText() const {
 
 void GameWidget::updateStatusText() {
     if (!m_gameStarted) { emit statusChanged(QString("选关中：%1/%2 - %3 | 按 1-5 选关，Enter 开始") .arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name)); return; }
+    if (m_introPanFrames > 0) { emit statusChanged(QString("开场镜头中：%1").arg(m_levels[m_currentLevel].name)); return; }
     QString text = "任务代号: Metal Gear Solid Tribute | ";
     text += QString("关卡: %1/%2 | ").arg(m_currentLevel + 1).arg((int)m_levels.size());
     text += QString("当前状态: %1 | ").arg(alertText());

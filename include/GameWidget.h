@@ -83,11 +83,13 @@ private:
     std::vector<Vec2> searchPattern(const Vec2& pivot) const;
     void applyFacingFromStep(Guard& guard, const Vec2& next);
     QString directionGlyph(Direction d) const;
+    void beginLevelIntro();
 
     std::vector<LevelData> m_levels;
     std::vector<std::vector<TileType>> m_map;
     Vec2 m_player;
     Vec2 m_spawn;
+    Vec2 m_goal;
     Vec2 m_playerTickStart;
     std::vector<Guard> m_guards;
     AlertState m_alertState = AlertState::Calm;
@@ -105,6 +107,7 @@ private:
     bool m_playerCaught = false;
     bool m_gameStarted = false;
     int m_menuSelectedLevel = 0;
+    int m_introPanFrames = 0;
 
     QPixmap m_playerTex, m_guardTex, m_floorTex, m_wallTex, m_boxTex, m_goalTex, m_titleTex;
     AudioManager m_audio;
