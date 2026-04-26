@@ -246,13 +246,19 @@ void GameWidget::paintEvent(QPaintEvent*) {
         p.drawText(QRect(0, 240, width(), 28), Qt::AlignCenter,
                    QString("当前选择关卡: %1 / %2 - %3").arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name));
         p.drawText(QRect(0, 272, width(), 28), Qt::AlignCenter, "按 1-5 选关，按 Enter 开始，按 Esc 回到这里");
-        p.drawText(QRect(0, 304, width(), 28), Qt::AlignCenter, "开局会先看终点，停顿一下，再切到主角位置");
         return;
     }
 
     p.setClipRect(viewport);
-    for (int y = 0; y < (int)m_map.size(); ++y) {
-        for (int x = 0; x < (int)m_map[y].size(); ++x) {
+
+    // 大地图版本只绘制当前镜头范围内的格子，避免 100x70 以上地图拖慢帧率。
+    const int visibleStartX = std::max(0, camX / kTileSize - 1);
+    const int visibleEndX = std::min((int)m_map[0].size() - 1, (camX + viewport.width()) / kTileSize + 1);
+    const int visibleStartY = std::max(0, camY / kTileSize - 1);
+    const int visibleEndY = std::min((int)m_map.size() - 1, (camY + viewport.height()) / kTileSize + 1);
+
+    for (int y = visibleStartY; y <= visibleEndY; ++y) {
+        for (int x = visibleStartX; x <= visibleEndX; ++x) {
             QRect tileRect(viewport.left() + x * kTileSize - camX,
                            viewport.top() + y * kTileSize - camY,
                            kTileSize, kTileSize);
@@ -366,6 +372,15 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
                 m_playerHidden = false;
             } else if (!threatened) {
                 m_playerHidden = true;
+                for (auto& guard : m_guards) {
+                    if (guard.mode == GuardMode::Chase) {
+                        guard.mode = GuardMode::Search;
+                        guard.searchPivot = m_player;
+                        guard.lastKnownPlayer = m_player;
+                        guard.searchFrames = 18;
+                        guard.searchIndex = 0;
+                    }
+                }
             }
             updateStatusText();
             update();
@@ -465,6 +480,16 @@ void GameWidget::updateGuards() {
     for (auto& guard : m_guards) {
         const int directDist = std::abs(guard.pos.x - m_player.x) + std::abs(guard.pos.y - m_player.y);
         const bool seesPlayer = canSeePlayer(guard);
+
+        // 玩家成功进入纸箱后，守卫不应长期保持 Chase 红色视野。
+        // 这里把追击态降级为短搜索态，搜索结束后自然回归巡逻，避免 AI 卡在红色警戒。
+        if (m_playerHidden && guard.mode == GuardMode::Chase) {
+            guard.mode = GuardMode::Search;
+            guard.searchPivot = m_player;
+            guard.lastKnownPlayer = m_player;
+            guard.searchFrames = std::min(guard.searchFrames, 18);
+            guard.searchIndex = 0;
+        }
 
         if (seesPlayer) {
             guard.mode = GuardMode::Chase;
@@ -727,7 +752,7 @@ QString GameWidget::alertText() const {
 void GameWidget::updateStatusText() {
     if (!m_gameStarted) { emit statusChanged(QString("选关中：%1/%2 - %3 | 按 1-5 选关，Enter 开始") .arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name)); return; }
     if (m_introPanFrames > 0) { emit statusChanged(QString("开场镜头中：%1").arg(m_levels[m_currentLevel].name)); return; }
-    QString text = "任务代号: Metal Gear Solid Tribute | ";
+    QString text = "任务代号: NKU-26C-MGS-tribute | ";
     text += QString("关卡: %1/%2 | ").arg(m_currentLevel + 1).arg((int)m_levels.size());
     text += QString("当前状态: %1 | ").arg(alertText());
     text += QString("玩家坐标: (%1,%2) | ").arg(m_player.x).arg(m_player.y);

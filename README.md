@@ -1,4 +1,2 @@
-
-v1：网格地图与墙体阻挡+守卫巡逻，后续优化地图
-patch1：跟新了开场镜头，复杂了地图设计，适当增加敌人数量，地图仍需优化
-fix：优化了被敌人发现后躲进箱子会卡顿的情况
+v1: Grid Map with Wall Collisions + Guard Patrolling
+v2: expand stealth levels and polish guard search behavior
