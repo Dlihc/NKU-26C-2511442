@@ -1,2 +1,20 @@
-v1: Grid Map with Wall Collisions + Guard Patrolling
-v2: expand stealth levels and polish guard search behavior
+# NKU-26C-MGS-tribute
+
+南开大学 2026 高级语言程序设计 2-2 大作业项目。
+
+## 版本记录
+
+- v1：完成基础窗口、地图绘制、玩家移动、守卫巡逻和基础潜行判定。
+- v2：扩展为 5 张大地图，加入外部 JSON 关卡、滚动视角、开场运镜、关卡音效，并优化守卫搜索行为。
+- v3：在 v2 基础上新增任务评价系统、潜行评级称号和最终总结算界面。
+
+## 操作方式
+
+- WASD / 方向键：移动
+- 空格：在纸箱格隐藏或离开纸箱
+- 1-5：选择关卡
+- Enter：开始 / 结算后继续
+- Esc：返回选关
+- R：重开当前关
+
+

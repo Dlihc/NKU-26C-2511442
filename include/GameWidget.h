@@ -7,6 +7,8 @@
 #include <vector>
 #include <optional>
 
+class QPainter;
+
 class GameWidget : public QWidget {
     Q_OBJECT
 public:
@@ -60,6 +62,18 @@ private:
         QString name;
     };
 
+    struct MissionStats {
+        QString levelName;
+        int steps = 0;
+        int alertCount = 0;
+        int caughtCount = 0;
+        int hideCount = 0;
+        int frames = 0;
+        int score = 0;
+        QString grade;
+        QString title;
+    };
+
     static constexpr int kTileSize = 32;
 
     void buildLevels();
@@ -84,6 +98,13 @@ private:
     void applyFacingFromStep(Guard& guard, const Vec2& next);
     QString directionGlyph(Direction d) const;
     void beginLevelIntro();
+    QString formatFrames(int frames) const;
+    QString gradeFromScore(int score) const;
+    QString titleFromGrade(const QString& grade) const;
+    MissionStats makeCurrentMissionStats() const;
+    void finishCurrentMission();
+    void drawMissionResult(QPainter& p);
+    void drawFinalResult(QPainter& p);
 
     std::vector<LevelData> m_levels;
     std::vector<std::vector<TileType>> m_map;
@@ -97,6 +118,10 @@ private:
     QTimer m_timer;
     int m_playerMoveCooldown = 0;
     int m_stepCounter = 0;
+    int m_levelFrames = 0;
+    int m_alertCount = 0;
+    int m_caughtCount = 0;
+    int m_hideCount = 0;
     int m_suspiciousFrames = 0;
     int m_respawnInvincibleFrames = 0;
     int m_victoryFrames = 0;
@@ -106,8 +131,11 @@ private:
     bool m_playerWon = false;
     bool m_playerCaught = false;
     bool m_gameStarted = false;
+    bool m_showMissionResult = false;
+    bool m_showFinalResult = false;
     int m_menuSelectedLevel = 0;
     int m_introPanFrames = 0;
+    std::vector<MissionStats> m_completedStats;
 
     QPixmap m_playerTex, m_guardTex, m_floorTex, m_wallTex, m_boxTex, m_goalTex, m_titleTex;
     AudioManager m_audio;

@@ -196,6 +196,10 @@ void GameWidget::loadLevel(int index) {
     m_pressedKeys.clear();
     m_playerMoveCooldown = 0;
     m_stepCounter = 0;
+    m_levelFrames = 0;
+    m_alertCount = 0;
+    m_caughtCount = 0;
+    m_hideCount = 0;
     m_suspiciousFrames = 0;
     m_respawnInvincibleFrames = 120;
     m_victoryFrames = 0;
@@ -203,6 +207,8 @@ void GameWidget::loadLevel(int index) {
     m_playerHidden = false;
     m_playerWon = false;
     m_playerCaught = false;
+    m_showMissionResult = false;
+    m_showFinalResult = false;
     m_playerTickStart = m_player;
     m_introPanFrames = 0;
 }
@@ -328,6 +334,15 @@ void GameWidget::paintEvent(QPaintEvent*) {
     }
     p.setClipping(false);
 
+    if (m_showFinalResult) {
+        drawFinalResult(p);
+        return;
+    }
+    if (m_showMissionResult) {
+        drawMissionResult(p);
+        return;
+    }
+
     p.setPen(QColor(180, 255, 180));
     p.setFont(QFont("Microsoft YaHei", 10));
     p.drawText(QRect(24, height() - 48, width() - 48, 24), Qt::AlignLeft,
@@ -343,11 +358,36 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
             return;
         }
         if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            m_completedStats.clear();
             loadLevel(m_menuSelectedLevel);
             m_gameStarted = true;
             m_respawnInvincibleFrames = 120;
             beginLevelIntro();
             update();
+        }
+        return;
+    }
+    if (m_showMissionResult || m_showFinalResult) {
+        if (event->key() == Qt::Key_Escape) {
+            returnToMenu();
+            return;
+        }
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            if (m_showFinalResult) {
+                returnToMenu();
+            } else if (m_currentLevel + 1 >= (int)m_levels.size()) {
+                m_showMissionResult = false;
+                m_showFinalResult = true;
+                updateStatusText();
+                update();
+            } else {
+                loadLevel(m_currentLevel + 1);
+                m_gameStarted = true;
+                beginLevelIntro();
+                updateStatusText();
+                update();
+            }
+            return;
         }
         return;
     }
@@ -372,6 +412,7 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
                 m_playerHidden = false;
             } else if (!threatened) {
                 m_playerHidden = true;
+                ++m_hideCount;
                 for (auto& guard : m_guards) {
                     if (guard.mode == GuardMode::Chase) {
                         guard.mode = GuardMode::Search;
@@ -403,6 +444,7 @@ void GameWidget::tick() {
     if (!m_gameStarted) { update(); return; }
     m_playerTickStart = m_player;
     if (m_introPanFrames > 0) { --m_introPanFrames; updateStatusText(); update(); return; }
+    if (m_showMissionResult || m_showFinalResult) { updateStatusText(); update(); return; }
     if (m_playerMoveCooldown > 0) --m_playerMoveCooldown;
     if (m_respawnInvincibleFrames > 0) --m_respawnInvincibleFrames;
 
@@ -423,18 +465,9 @@ void GameWidget::tick() {
         return;
     }
 
-    if (m_playerWon) {
-        if (m_victoryFrames > 0) --m_victoryFrames;
-        if (m_victoryFrames == 0) {
-            if (m_currentLevel + 1 < (int)m_levels.size()) loadLevel(m_currentLevel + 1);
-            else loadLevel(0);
-            beginLevelIntro();
-        }
-        updateStatusText();
-        update();
-        return;
-    }
+    if (m_playerWon) { updateStatusText(); update(); return; }
 
+    ++m_levelFrames;
     handleHeldMovement();
     updateGuards();
     updateDetection();
@@ -609,6 +642,9 @@ void GameWidget::updateDetection() {
         m_alertState = AlertState::Calm;
     }
 
+    if (m_alertState == AlertState::Alerted && prev != AlertState::Alerted) {
+        ++m_alertCount;
+    }
     if (m_alertState == AlertState::Suspicious && prev != AlertState::Suspicious) {
         m_audio.playSuspicious();
     }
@@ -616,6 +652,7 @@ void GameWidget::updateDetection() {
 
 void GameWidget::onPlayerCaught() {
     if (m_playerCaught || m_respawnInvincibleFrames > 0) return;
+    ++m_caughtCount;
     m_audio.playAlert();
     m_alertState = AlertState::Alerted;
     m_playerCaught = true;
@@ -623,9 +660,11 @@ void GameWidget::onPlayerCaught() {
 }
 
 void GameWidget::onPlayerReachedGoal() {
+    if (m_playerWon) return;
     m_alertState = AlertState::Victory;
     m_playerWon = true;
-    m_victoryFrames = 45;
+    m_victoryFrames = 0;
+    finishCurrentMission();
     m_audio.playClear();
 }
 
@@ -729,6 +768,160 @@ GameWidget::Vec2 GameWidget::dirToVec(Direction dir) const {
     return {0, 0};
 }
 
+
+QString GameWidget::formatFrames(int frames) const {
+    const int totalSeconds = std::max(0, frames / 60);
+    const int minutes = totalSeconds / 60;
+    const int seconds = totalSeconds % 60;
+    return QString("%1:%2").arg(minutes, 2, 10, QChar('0')).arg(seconds, 2, 10, QChar('0'));
+}
+
+QString GameWidget::gradeFromScore(int score) const {
+    if (score >= 95) return "S";
+    if (score >= 85) return "A";
+    if (score >= 72) return "B";
+    if (score >= 60) return "C";
+    return "D";
+}
+
+QString GameWidget::titleFromGrade(const QString& grade) const {
+    if (grade == "S") return "无声潜入者";
+    if (grade == "A") return "优秀特工";
+    if (grade == "B") return "合格潜入者";
+    if (grade == "C") return "仓促渗透者";
+    return "警报制造机";
+}
+
+GameWidget::MissionStats GameWidget::makeCurrentMissionStats() const {
+    MissionStats stats;
+    stats.levelName = m_levels[m_currentLevel].name;
+    stats.steps = m_stepCounter;
+    stats.alertCount = m_alertCount;
+    stats.caughtCount = m_caughtCount;
+    stats.hideCount = m_hideCount;
+    stats.frames = m_levelFrames;
+
+    const int idealSteps = ((int)m_map[0].size() + (int)m_map.size()) * 2;
+    const int stepPenalty = std::max(0, stats.steps - idealSteps) / 10;
+    const int timePenalty = std::max(0, stats.frames / 60 - 180) / 8;
+    int score = 100;
+    score -= stats.alertCount * 12;
+    score -= stats.caughtCount * 25;
+    score -= stats.hideCount * 2;
+    score -= stepPenalty;
+    score -= timePenalty;
+    stats.score = std::clamp(score, 0, 100);
+    stats.grade = gradeFromScore(stats.score);
+    stats.title = titleFromGrade(stats.grade);
+    return stats;
+}
+
+void GameWidget::finishCurrentMission() {
+    MissionStats stats = makeCurrentMissionStats();
+    if ((int)m_completedStats.size() <= m_currentLevel) {
+        m_completedStats.resize(m_currentLevel + 1);
+    }
+    m_completedStats[m_currentLevel] = stats;
+    m_showMissionResult = true;
+    m_showFinalResult = false;
+    m_pressedKeys.clear();
+}
+
+void GameWidget::drawMissionResult(QPainter& p) {
+    const MissionStats stats = makeCurrentMissionStats();
+    p.fillRect(rect(), QColor(0, 0, 0, 205));
+    QRect panel(width() / 2 - 300, height() / 2 - 220, 600, 440);
+    p.fillRect(panel, QColor(12, 24, 20, 235));
+    p.setPen(QColor(120, 255, 180));
+    p.drawRect(panel.adjusted(0, 0, -1, -1));
+
+    p.setFont(QFont("Consolas", 24, QFont::Bold));
+    p.setPen(QColor(220, 255, 220));
+    p.drawText(QRect(panel.left(), panel.top() + 24, panel.width(), 42), Qt::AlignCenter, "MISSION COMPLETE");
+
+    p.setFont(QFont("Microsoft YaHei", 13, QFont::Bold));
+    p.drawText(QRect(panel.left() + 40, panel.top() + 86, panel.width() - 80, 28), Qt::AlignLeft, QString("关卡：%1 / %2  %3").arg(m_currentLevel + 1).arg((int)m_levels.size()).arg(stats.levelName));
+
+    p.setFont(QFont("Microsoft YaHei", 12));
+    int y = panel.top() + 132;
+    const int line = 32;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("用时：%1").arg(formatFrames(stats.frames))); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("步数：%1").arg(stats.steps)); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("警戒次数：%1").arg(stats.alertCount)); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("被抓次数：%1").arg(stats.caughtCount)); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("纸箱躲藏次数：%1").arg(stats.hideCount));
+
+    p.setFont(QFont("Consolas", 64, QFont::Bold));
+    p.setPen(stats.grade == "S" ? QColor(255, 240, 120) : QColor(170, 255, 210));
+    p.drawText(QRect(panel.right() - 210, panel.top() + 132, 160, 86), Qt::AlignCenter, stats.grade);
+    p.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    p.setPen(QColor(220, 255, 220));
+    p.drawText(QRect(panel.right() - 260, panel.top() + 220, 250, 36), Qt::AlignCenter, stats.title);
+    p.setFont(QFont("Consolas", 13, QFont::Bold));
+    p.drawText(QRect(panel.right() - 260, panel.top() + 262, 250, 28), Qt::AlignCenter, QString("SCORE %1").arg(stats.score));
+
+    p.setFont(QFont("Microsoft YaHei", 11));
+    p.setPen(QColor(180, 230, 190));
+    const QString nextText = (m_currentLevel + 1 < (int)m_levels.size()) ? "按 Enter 进入下一关，按 Esc 返回选关" : "按 Enter 查看最终总结算，按 Esc 返回选关";
+    p.drawText(QRect(panel.left(), panel.bottom() - 58, panel.width(), 28), Qt::AlignCenter, nextText);
+}
+
+void GameWidget::drawFinalResult(QPainter& p) {
+    p.fillRect(rect(), QColor(0, 0, 0, 215));
+    QRect panel(width() / 2 - 330, height() / 2 - 250, 660, 500);
+    p.fillRect(panel, QColor(10, 18, 22, 240));
+    p.setPen(QColor(130, 210, 255));
+    p.drawRect(panel.adjusted(0, 0, -1, -1));
+
+    int totalSteps = 0, totalAlerts = 0, totalCaught = 0, totalHide = 0, totalFrames = 0, totalScore = 0, count = 0;
+    for (const auto& s : m_completedStats) {
+        if (s.levelName.isEmpty()) continue;
+        totalSteps += s.steps;
+        totalAlerts += s.alertCount;
+        totalCaught += s.caughtCount;
+        totalHide += s.hideCount;
+        totalFrames += s.frames;
+        totalScore += s.score;
+        ++count;
+    }
+    const int averageScore = count > 0 ? totalScore / count : 0;
+    const QString finalGrade = gradeFromScore(averageScore);
+
+    p.setFont(QFont("Consolas", 24, QFont::Bold));
+    p.setPen(QColor(220, 245, 255));
+    p.drawText(QRect(panel.left(), panel.top() + 22, panel.width(), 42), Qt::AlignCenter, "OPERATION COMPLETE");
+
+    p.setFont(QFont("Microsoft YaHei", 12));
+    int y = panel.top() + 86;
+    for (int i = 0; i < (int)m_completedStats.size(); ++i) {
+        const auto& s = m_completedStats[i];
+        if (s.levelName.isEmpty()) continue;
+        p.setPen(QColor(210, 245, 220));
+        p.drawText(QRect(panel.left() + 46, y, panel.width() - 92, 28), Qt::AlignLeft,
+                   QString("%1. %2    %3  %4分  %5").arg(i + 1).arg(s.levelName).arg(s.grade).arg(s.score).arg(s.title));
+        y += 32;
+    }
+
+    y += 16;
+    p.setPen(QColor(180, 230, 255));
+    p.drawText(QRect(panel.left() + 46, y, 300, 28), Qt::AlignLeft, QString("总用时：%1").arg(formatFrames(totalFrames))); y += 30;
+    p.drawText(QRect(panel.left() + 46, y, 300, 28), Qt::AlignLeft, QString("总步数：%1").arg(totalSteps)); y += 30;
+    p.drawText(QRect(panel.left() + 46, y, 300, 28), Qt::AlignLeft, QString("总警戒：%1    总被抓：%2    总躲藏：%3").arg(totalAlerts).arg(totalCaught).arg(totalHide));
+
+    p.setFont(QFont("Consolas", 58, QFont::Bold));
+    p.setPen(finalGrade == "S" ? QColor(255, 240, 120) : QColor(160, 220, 255));
+    p.drawText(QRect(panel.right() - 210, panel.top() + 275, 160, 80), Qt::AlignCenter, finalGrade);
+    p.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    p.setPen(QColor(225, 245, 255));
+    p.drawText(QRect(panel.right() - 280, panel.top() + 358, 290, 36), Qt::AlignCenter, titleFromGrade(finalGrade));
+    p.setFont(QFont("Consolas", 13, QFont::Bold));
+    p.drawText(QRect(panel.right() - 280, panel.top() + 396, 290, 28), Qt::AlignCenter, QString("AVERAGE SCORE %1").arg(averageScore));
+
+    p.setFont(QFont("Microsoft YaHei", 11));
+    p.setPen(QColor(190, 225, 235));
+    p.drawText(QRect(panel.left(), panel.bottom() - 52, panel.width(), 28), Qt::AlignCenter, "按 Enter 或 Esc 返回选关");
+}
+
 QString GameWidget::directionGlyph(Direction d) const {
     switch (d) {
         case Direction::Up: return "^";
@@ -752,6 +945,8 @@ QString GameWidget::alertText() const {
 void GameWidget::updateStatusText() {
     if (!m_gameStarted) { emit statusChanged(QString("选关中：%1/%2 - %3 | 按 1-5 选关，Enter 开始") .arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name)); return; }
     if (m_introPanFrames > 0) { emit statusChanged(QString("开场镜头中：%1").arg(m_levels[m_currentLevel].name)); return; }
+    if (m_showFinalResult) { emit statusChanged("全部任务完成：最终总结算 | Enter/Esc 返回选关"); return; }
+    if (m_showMissionResult) { emit statusChanged("关卡完成：任务评价已生成 | Enter 继续，Esc 返回选关"); return; }
     QString text = "任务代号: NKU-26C-MGS-tribute | ";
     text += QString("关卡: %1/%2 | ").arg(m_currentLevel + 1).arg((int)m_levels.size());
     text += QString("当前状态: %1 | ").arg(alertText());
