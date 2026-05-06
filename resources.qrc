@@ -18,5 +18,6 @@
         <file>assets/levels/level3.json</file>
         <file>assets/levels/level4.json</file>
         <file>assets/levels/level5.json</file>
+        <file>assets/levels/level6.json</file>
     </qresource>
 </RCC>

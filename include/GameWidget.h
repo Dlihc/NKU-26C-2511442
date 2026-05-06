@@ -54,11 +54,23 @@ private:
         Vec2 searchPivot{0,0};
         int searchFrames = 0;
         int searchIndex = 0;
+        Vec2 pendingNoiseTarget{-1,-1};
+        int investigateDelayFrames = 0;
+    };
+
+    struct Camera {
+        Vec2 pos;
+        Direction facing = Direction::Down;
+        int range = 7;
+        bool rotating = false;
+        int cycle = 90;
+        int phase = 0;
     };
 
     struct LevelData {
         std::vector<QString> rows;
         std::vector<Guard> guards;
+        std::vector<Camera> cameras;
         QString name;
     };
 
@@ -85,18 +97,25 @@ private:
     bool isInsideMap(const Vec2& pos) const;
     TileType tileAt(const Vec2& pos) const;
     void updateGuards();
+    void updateCameras();
     void updateDetection();
     void onPlayerCaught();
     void onPlayerReachedGoal();
     bool canSeePlayer(const Guard& guard) const;
+    bool canCameraSeePlayer(const Camera& camera) const;
     bool canSeeFrom(const Vec2& watcher, Direction facing, int range, const Vec2& target) const;
     bool hasLineOfSight(const Vec2& from, const Vec2& to) const;
     Vec2 dirToVec(Direction dir) const;
     QString alertText() const;
     std::optional<Vec2> nextStepToward(const Vec2& start, const Vec2& goal) const;
+    std::optional<Vec2> noiseTarget() const;
+    std::optional<Vec2> nearestWalkableAround(const Vec2& pos, const Vec2& from) const;
     std::vector<Vec2> searchPattern(const Vec2& pivot) const;
     void applyFacingFromStep(Guard& guard, const Vec2& next);
+    Direction cameraFacing(const Camera& camera) const;
     QString directionGlyph(Direction d) const;
+    void makeNoise();
+    QString completedLabelForLevel(int index) const;
     void beginLevelIntro();
     QString formatFrames(int frames) const;
     QString gradeFromScore(int score) const;
@@ -112,6 +131,7 @@ private:
     Vec2 m_spawn;
     Vec2 m_goal;
     Vec2 m_playerTickStart;
+    Vec2 m_noisePos{-1, -1};
     std::vector<Guard> m_guards;
     AlertState m_alertState = AlertState::Calm;
     QSet<int> m_pressedKeys;
@@ -126,7 +146,12 @@ private:
     int m_respawnInvincibleFrames = 0;
     int m_victoryFrames = 0;
     int m_caughtFlashFrames = 0;
+    int m_noiseFrames = 0;
+    int m_noiseCooldown = 0;
+    int m_cameraAlertFrames = 0;
     int m_currentLevel = 0;
+    Direction m_playerFacing = Direction::Down;
+    bool m_aimingNoise = false;
     bool m_playerHidden = false;
     bool m_playerWon = false;
     bool m_playerCaught = false;
@@ -136,6 +161,7 @@ private:
     int m_menuSelectedLevel = 0;
     int m_introPanFrames = 0;
     std::vector<MissionStats> m_completedStats;
+    std::vector<Camera> m_cameras;
 
     QPixmap m_playerTex, m_guardTex, m_floorTex, m_wallTex, m_boxTex, m_goalTex, m_titleTex;
     AudioManager m_audio;

@@ -2,6 +2,7 @@
 #include <QPainter>
 #include <QKeyEvent>
 #include <QFont>
+#include <QPen>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
@@ -54,6 +55,7 @@ void GameWidget::returnToMenu() {
     m_playerWon = false;
     m_alertState = AlertState::Calm;
     m_pressedKeys.clear();
+    m_menuSelectedLevel = m_currentLevel;
     loadLevel(m_menuSelectedLevel);
     update();
     updateStatusText();
@@ -145,6 +147,18 @@ void GameWidget::buildLevels() {
             }
             if (!g.patrol.empty()) lv.guards.push_back(g);
         }
+        for (const auto& cv : obj.value("cameras").toArray()) {
+            const auto co = cv.toObject();
+            Camera c;
+            const auto pos = co.value("pos").toArray();
+            if (pos.size() >= 2) c.pos = {pos[0].toInt(), pos[1].toInt()};
+            c.facing = parseDir(co.value("facing").toString());
+            c.range = co.value("range").toInt(7);
+            c.rotating = co.value("rotating").toBool(false);
+            c.cycle = std::max(1, co.value("cycle").toInt(90));
+            c.phase = co.value("phase").toInt(0);
+            lv.cameras.push_back(c);
+        }
         m_levels.push_back(lv);
     };
 
@@ -162,6 +176,9 @@ void GameWidget::buildLevels() {
 
     // Level 5: scene-authored final sector with heavier pressure
     loadSceneLevel(":/assets/levels/level5.json");
+
+    // Level 6: scene-authored extended sector with layered camera pressure
+    loadSceneLevel(":/assets/levels/level6.json");
 }
 
 void GameWidget::loadLevel(int index) {
@@ -169,6 +186,7 @@ void GameWidget::loadLevel(int index) {
     const auto& data = m_levels[m_currentLevel];
     m_map.assign(data.rows.size(), std::vector<TileType>(data.rows[0].size(), TileType::Floor));
     m_guards = data.guards;
+    m_cameras = data.cameras;
 
     for (int y = 0; y < (int)data.rows.size(); ++y) {
         for (int x = 0; x < data.rows[y].size(); ++x) {
@@ -190,6 +208,7 @@ void GameWidget::loadLevel(int index) {
         g.searchIndex = 0;
         g.lastKnownPlayer = m_player;
         g.searchPivot = g.pos;
+        g.moveCooldown = std::min(g.moveCooldown, 18);
     }
 
     m_alertState = AlertState::Calm;
@@ -201,9 +220,15 @@ void GameWidget::loadLevel(int index) {
     m_caughtCount = 0;
     m_hideCount = 0;
     m_suspiciousFrames = 0;
-    m_respawnInvincibleFrames = 120;
+    m_respawnInvincibleFrames = 90;
     m_victoryFrames = 0;
     m_caughtFlashFrames = 0;
+    m_noiseFrames = 0;
+            m_noiseCooldown = 0;
+            m_cameraAlertFrames = 0;
+            m_noisePos = {-1, -1};
+            m_aimingNoise = false;
+            m_playerFacing = Direction::Down;
     m_playerHidden = false;
     m_playerWon = false;
     m_playerCaught = false;
@@ -241,27 +266,79 @@ void GameWidget::paintEvent(QPaintEvent*) {
     p.setFont(QFont("Microsoft YaHei", 10));
     p.setPen(QColor(200, 235, 200));
     p.drawText(QRect(16, 18, width() - 32, 24), Qt::AlignLeft | Qt::AlignVCenter,
-               "方向键/WASD 移动 | 空格躲藏 | 1-5 选关 | Enter 开始 | Esc 返回选关 | R 重开当前关");
+               QString::fromUtf8(u8"WASD/方向键 移动 | F 制造声响 | 空格 躲藏 | 1-%1 选关 | Enter 开始/继续 | Esc 返回 | R 重开")
+                   .arg((int)m_levels.size()));
     p.drawText(QRect(16, 42, width() - 32, 24), Qt::AlignLeft | Qt::AlignVCenter,
-               QString("当前关卡: %1 / %2 - %3").arg(m_currentLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_currentLevel].name));
+               QString::fromUtf8(u8"当前关卡: %1 / %2 - %3").arg(m_currentLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_currentLevel].name));
 
     if (!m_gameStarted) {
         p.fillRect(rect(), QColor(0, 0, 0, 190));
-        p.setPen(QColor(220, 255, 220));
-        p.setFont(QFont("Microsoft YaHei", 12));
-        p.drawText(QRect(0, 240, width(), 28), Qt::AlignCenter,
-                   QString("当前选择关卡: %1 / %2 - %3").arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name));
-        p.drawText(QRect(0, 272, width(), 28), Qt::AlignCenter, "按 1-5 选关，按 Enter 开始，按 Esc 回到这里");
+        const int panelW = std::min(780, width() - 80);
+        const int panelH = std::min(470, height() - 120);
+        QRect menuPanel(width() / 2 - panelW / 2, height() / 2 - panelH / 2, panelW, panelH);
+        p.fillRect(menuPanel, QColor(10, 24, 20, 235));
+        p.setPen(QColor(120, 255, 180));
+        p.drawRect(menuPanel.adjusted(0, 0, -1, -1));
+
+        p.setPen(QColor(225, 255, 225));
+        p.setFont(QFont("Consolas", 24, QFont::Bold));
+        p.drawText(QRect(menuPanel.left(), menuPanel.top() + 22, menuPanel.width(), 42),
+                   Qt::AlignCenter, QString::fromUtf8(u8"关卡选择"));
+
+        p.setFont(QFont("Microsoft YaHei", 13));
+        const int footerTop = menuPanel.bottom() - 58;
+        const int rowAreaTop = menuPanel.top() + 88;
+        const int rowAreaBottom = footerTop - 18;
+        const int rowStep = std::max(40, (rowAreaBottom - rowAreaTop) / std::max(1, (int)m_levels.size()));
+        const int rowHeight = std::min(38, rowStep - 6);
+        int rowY = rowAreaTop;
+        for (int i = 0; i < (int)m_levels.size(); ++i) {
+            const bool selected = (i == m_menuSelectedLevel);
+            QRect row(menuPanel.left() + 42, rowY, menuPanel.width() - 84, rowHeight);
+            if (selected) {
+                p.fillRect(row, QColor(46, 92, 72, 210));
+                p.setPen(QColor(170, 255, 205));
+                p.drawRect(row.adjusted(0, 0, -1, -1));
+            }
+            p.setPen(selected ? QColor(240, 255, 240) : QColor(205, 235, 210));
+            p.drawText(row.adjusted(14, 0, -14, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                       QString("%1. %2").arg(i + 1).arg(m_levels[i].name));
+            p.drawText(row.adjusted(0, 0, -18, 0), Qt::AlignVCenter | Qt::AlignRight,
+                       completedLabelForLevel(i));
+            rowY += rowStep;
+        }
+
+        p.setFont(QFont("Microsoft YaHei", 11));
+        p.setPen(QColor(180, 230, 190));
+        p.drawText(QRect(menuPanel.left(), footerTop, menuPanel.width(), 28),
+                   Qt::AlignCenter,
+                   QString::fromUtf8(u8"1-%1 或方向键选择关卡 | Enter 开始 | 通关后显示完成状态和评价")
+                       .arg((int)m_levels.size()));
         return;
     }
 
     p.setClipRect(viewport);
 
-    // 大地图版本只绘制当前镜头范围内的格子，避免 100x70 以上地图拖慢帧率。
+    // Draw only the visible part of the large map for steady frame rate.
     const int visibleStartX = std::max(0, camX / kTileSize - 1);
     const int visibleEndX = std::min((int)m_map[0].size() - 1, (camX + viewport.width()) / kTileSize + 1);
     const int visibleStartY = std::max(0, camY / kTileSize - 1);
     const int visibleEndY = std::min((int)m_map.size() - 1, (camY + viewport.height()) / kTileSize + 1);
+    const int theme = m_currentLevel % 5;
+    const std::array<QColor, 5> floorTint = {{
+        QColor(40, 100, 120, 28),
+        QColor(135, 105, 45, 32),
+        QColor(80, 95, 120, 30),
+        QColor(35, 115, 85, 34),
+        QColor(115, 55, 75, 32)
+    }};
+    const std::array<QColor, 5> wallTint = {{
+        QColor(55, 135, 155, 42),
+        QColor(150, 115, 50, 46),
+        QColor(105, 120, 150, 44),
+        QColor(45, 135, 95, 48),
+        QColor(150, 65, 90, 46)
+    }};
 
     for (int y = visibleStartY; y <= visibleEndY; ++y) {
         for (int x = visibleStartX; x <= visibleEndX; ++x) {
@@ -274,6 +351,70 @@ void GameWidget::paintEvent(QPaintEvent*) {
                 case TileType::Goal: p.drawPixmap(tileRect, m_goalTex); break;
                 case TileType::HideBox: p.drawPixmap(tileRect, m_boxTex); break;
                 default: break;
+            }
+            if (m_map[y][x] == TileType::Wall) {
+                p.fillRect(tileRect, wallTint[theme]);
+                p.setPen(QPen(QColor(220, 240, 220, 34), 1));
+                if (theme == 1 || theme == 4) p.drawLine(tileRect.topLeft(), tileRect.bottomRight());
+                else p.drawLine(tileRect.left(), tileRect.center().y(), tileRect.right(), tileRect.center().y());
+            } else {
+                p.fillRect(tileRect, floorTint[theme]);
+                if (((x + y + theme) % 7) == 0) {
+                    p.setPen(QPen(QColor(210, 230, 210, 26), 1));
+                    p.drawLine(tileRect.left() + 6, tileRect.bottom() - 6, tileRect.right() - 6, tileRect.bottom() - 6);
+                }
+                if (m_map[y][x] == TileType::Goal) {
+                    p.setPen(QPen(QColor(180, 255, 210, 120), 2));
+                    p.drawRect(tileRect.adjusted(4, 4, -5, -5));
+                }
+            }
+        }
+    }
+
+    if (m_noiseFrames > 0 && isInsideMap(m_noisePos)) {
+        const int pulse = m_noiseFrames % 24;
+        QRect nr(viewport.left() + m_noisePos.x * kTileSize - camX,
+                 viewport.top() + m_noisePos.y * kTileSize - camY,
+                 kTileSize, kTileSize);
+        p.setPen(QPen(QColor(120, 220, 255, 210), 2));
+        p.setBrush(QColor(120, 220, 255, 48));
+        p.drawEllipse(nr.adjusted(-pulse / 2, -pulse / 2, pulse / 2, pulse / 2));
+        p.setFont(QFont("Consolas", 12, QFont::Bold));
+        p.setPen(QColor(210, 245, 255));
+        p.drawText(nr, Qt::AlignCenter, "*");
+    }
+
+    if (m_aimingNoise && m_noiseCooldown == 0) {
+        const auto target = noiseTarget();
+        if (target) {
+            QRect ar(viewport.left() + target->x * kTileSize - camX,
+                     viewport.top() + target->y * kTileSize - camY,
+                     kTileSize, kTileSize);
+            p.setPen(QPen(QColor(130, 230, 255, 230), 2));
+            p.setBrush(QColor(130, 230, 255, 36));
+            p.drawRect(ar.adjusted(4, 4, -4, -4));
+            p.drawLine(ar.center().x() - 8, ar.center().y(), ar.center().x() + 8, ar.center().y());
+            p.drawLine(ar.center().x(), ar.center().y() - 8, ar.center().x(), ar.center().y() + 8);
+        }
+    }
+
+    p.setPen(Qt::NoPen);
+    for (const auto& camera : m_cameras) {
+        p.setBrush(QColor(90, 170, 255, 46));
+        const Direction facing = cameraFacing(camera);
+        const Vec2 f = dirToVec(facing);
+        for (int i = 1; i <= camera.range; ++i) {
+            const Vec2 center{camera.pos.x + f.x * i, camera.pos.y + f.y * i};
+            for (int side = -i / 3; side <= i / 3; ++side) {
+                Vec2 cell = center;
+                if (f.x != 0) cell.y += side;
+                if (f.y != 0) cell.x += side;
+                if (!isInsideMap(cell) || tileAt(cell) == TileType::Wall) continue;
+                if (!hasLineOfSight(camera.pos, cell)) continue;
+                QRect r(viewport.left() + cell.x * kTileSize - camX,
+                        viewport.top() + cell.y * kTileSize - camY,
+                        kTileSize, kTileSize);
+                p.drawRect(r);
             }
         }
     }
@@ -317,6 +458,18 @@ void GameWidget::paintEvent(QPaintEvent*) {
         }
     }
 
+    for (const auto& camera : m_cameras) {
+        QRect r(viewport.left() + camera.pos.x * kTileSize - camX,
+                viewport.top() + camera.pos.y * kTileSize - camY,
+                kTileSize, kTileSize);
+        p.setBrush(QColor(38, 76, 110));
+        p.setPen(QPen(QColor(150, 215, 255), 2));
+        p.drawRect(r.adjusted(5, 5, -5, -5));
+        p.setFont(QFont("Consolas", 11, QFont::Bold));
+        p.setPen(QColor(210, 240, 255));
+        p.drawText(r, Qt::AlignCenter, directionGlyph(cameraFacing(camera)));
+    }
+
     QRect pr(viewport.left() + m_player.x * kTileSize - camX,
              viewport.top() + m_player.y * kTileSize - camY,
              kTileSize, kTileSize);
@@ -346,22 +499,36 @@ void GameWidget::paintEvent(QPaintEvent*) {
     p.setPen(QColor(180, 255, 180));
     p.setFont(QFont("Microsoft YaHei", 10));
     p.drawText(QRect(24, height() - 48, width() - 48, 24), Qt::AlignLeft,
-               QString("状态: %1    步数: %2    躲藏: %3    守卫数: %4")
-               .arg(alertText()).arg(m_stepCounter).arg(m_playerHidden ? "是" : "否").arg((int)m_guards.size()));
+               QString::fromUtf8(u8"状态: %1    步数: %2    躲藏: %3    守卫数: %4    摄像头: %5")
+               .arg(alertText()).arg(m_stepCounter)
+               .arg(m_playerHidden ? QString::fromUtf8(u8"是") : QString::fromUtf8(u8"否"))
+               .arg((int)m_guards.size()).arg((int)m_cameras.size()));
 }
 
 void GameWidget::keyPressEvent(QKeyEvent* event) {
     if (event->isAutoRepeat()) return;
     if (!m_gameStarted) {
-        if (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_5) {
-            selectLevel(event->key() - Qt::Key_1);
+        if (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_9) {
+            const int requestedLevel = event->key() - Qt::Key_1;
+            if (requestedLevel < (int)m_levels.size()) {
+                selectLevel(requestedLevel);
+                return;
+            }
+        }
+        if (event->key() == Qt::Key_W || event->key() == Qt::Key_Up ||
+            event->key() == Qt::Key_A || event->key() == Qt::Key_Left) {
+            selectLevel((m_menuSelectedLevel + (int)m_levels.size() - 1) % (int)m_levels.size());
+            return;
+        }
+        if (event->key() == Qt::Key_S || event->key() == Qt::Key_Down ||
+            event->key() == Qt::Key_D || event->key() == Qt::Key_Right) {
+            selectLevel((m_menuSelectedLevel + 1) % (int)m_levels.size());
             return;
         }
         if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
-            m_completedStats.clear();
             loadLevel(m_menuSelectedLevel);
             m_gameStarted = true;
-            m_respawnInvincibleFrames = 120;
+            m_respawnInvincibleFrames = 90;
             beginLevelIntro();
             update();
         }
@@ -395,22 +562,26 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
         returnToMenu();
         return;
     }
-    if (m_introPanFrames > 0) return;
+    if (event->key() == Qt::Key_R) {
+        restartLevel();
+        return;
+    }
+    if (m_introPanFrames > 0) {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter || event->key() == Qt::Key_Space) {
+            m_introPanFrames = 0;
+            updateStatusText();
+            update();
+        }
+        return;
+    }
     if (m_pressedKeys.contains(event->key())) return;
     m_pressedKeys.insert(event->key());
 
     if (event->key() == Qt::Key_Space && !m_playerWon && !m_playerCaught) {
         if (tileAt(m_player) == TileType::HideBox) {
-            bool threatened = false;
-            for (const auto& guard : m_guards) {
-                if (guard.mode == GuardMode::Chase || canSeePlayer(guard)) {
-                    threatened = true;
-                    break;
-                }
-            }
             if (m_playerHidden) {
                 m_playerHidden = false;
-            } else if (!threatened) {
+            } else {
                 m_playerHidden = true;
                 ++m_hideCount;
                 for (auto& guard : m_guards) {
@@ -418,14 +589,22 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
                         guard.mode = GuardMode::Search;
                         guard.searchPivot = m_player;
                         guard.lastKnownPlayer = m_player;
-                        guard.searchFrames = 18;
+                        guard.searchFrames = 48;
                         guard.searchIndex = 0;
+                        guard.moveCooldown = std::min(guard.moveCooldown, 4);
                     }
                 }
             }
             updateStatusText();
             update();
         }
+        return;
+    }
+
+    if (event->key() == Qt::Key_F && !m_playerHidden && !m_playerWon && !m_playerCaught) {
+        m_aimingNoise = true;
+        updateStatusText();
+        update();
         return;
     }
 
@@ -438,6 +617,12 @@ void GameWidget::keyPressEvent(QKeyEvent* event) {
 void GameWidget::keyReleaseEvent(QKeyEvent* event) {
     if (event->isAutoRepeat()) return;
     m_pressedKeys.remove(event->key());
+    if (event->key() == Qt::Key_F && m_aimingNoise) {
+        m_aimingNoise = false;
+        makeNoise();
+        updateStatusText();
+        update();
+    }
 }
 
 void GameWidget::tick() {
@@ -447,6 +632,9 @@ void GameWidget::tick() {
     if (m_showMissionResult || m_showFinalResult) { updateStatusText(); update(); return; }
     if (m_playerMoveCooldown > 0) --m_playerMoveCooldown;
     if (m_respawnInvincibleFrames > 0) --m_respawnInvincibleFrames;
+    if (m_noiseCooldown > 0) --m_noiseCooldown;
+    if (m_noiseFrames > 0) --m_noiseFrames;
+    if (m_cameraAlertFrames > 0) --m_cameraAlertFrames;
 
     if (m_playerCaught) {
         if (m_caughtFlashFrames > 0) --m_caughtFlashFrames;
@@ -454,10 +642,11 @@ void GameWidget::tick() {
             m_player = m_spawn;
             m_playerHidden = false;
             m_playerCaught = false;
-            m_respawnInvincibleFrames = 120;
+            m_respawnInvincibleFrames = 90;
             for (auto& g : m_guards) {
                 g.mode = GuardMode::Patrol;
                 g.searchFrames = 0;
+                g.investigateDelayFrames = 0;
             }
         }
         updateStatusText();
@@ -470,6 +659,7 @@ void GameWidget::tick() {
     ++m_levelFrames;
     handleHeldMovement();
     updateGuards();
+    updateCameras();
     updateDetection();
     updateStatusText();
     update();
@@ -485,6 +675,7 @@ void GameWidget::handleHeldMovement() {
 
 void GameWidget::tryMove(Direction dir, bool fromHeld) {
     if (m_playerHidden || m_playerMoveCooldown > 0 || m_playerWon || m_playerCaught) return;
+    m_playerFacing = dir;
     Vec2 next = m_player;
     const Vec2 d = dirToVec(dir);
     next.x += d.x; next.y += d.y;
@@ -514,13 +705,12 @@ void GameWidget::updateGuards() {
         const int directDist = std::abs(guard.pos.x - m_player.x) + std::abs(guard.pos.y - m_player.y);
         const bool seesPlayer = canSeePlayer(guard);
 
-        // 玩家成功进入纸箱后，守卫不应长期保持 Chase 红色视野。
-        // 这里把追击态降级为短搜索态，搜索结束后自然回归巡逻，避免 AI 卡在红色警戒。
+        // If the player hides in a box during chase, guards search around that box instead of freezing.
         if (m_playerHidden && guard.mode == GuardMode::Chase) {
             guard.mode = GuardMode::Search;
             guard.searchPivot = m_player;
             guard.lastKnownPlayer = m_player;
-            guard.searchFrames = std::min(guard.searchFrames, 18);
+            guard.searchFrames = std::min(guard.searchFrames, 48);
             guard.searchIndex = 0;
         }
 
@@ -529,6 +719,7 @@ void GameWidget::updateGuards() {
             guard.lastKnownPlayer = m_player;
             guard.searchPivot = m_player;
             guard.searchFrames = 36;
+            guard.investigateDelayFrames = 0;
         } else if (guard.mode == GuardMode::Chase) {
             if (guard.searchFrames > 0) --guard.searchFrames;
             if (guard.searchFrames == 0) {
@@ -546,6 +737,19 @@ void GameWidget::updateGuards() {
             guard.pos = m_player;
             onPlayerCaught();
             return;
+        }
+
+        if (guard.investigateDelayFrames > 0) {
+            --guard.investigateDelayFrames;
+            if (isInsideMap(guard.pendingNoiseTarget)) {
+                const int dx = guard.pendingNoiseTarget.x - guard.pos.x;
+                const int dy = guard.pendingNoiseTarget.y - guard.pos.y;
+                if (std::abs(dx) > std::abs(dy))
+                    guard.facing = dx > 0 ? Direction::Right : Direction::Left;
+                else if (dy != 0)
+                    guard.facing = dy > 0 ? Direction::Down : Direction::Up;
+            }
+            continue;
         }
 
         const Vec2 guardBeforeMove = guard.pos;
@@ -566,7 +770,12 @@ void GameWidget::updateGuards() {
                 break;
             }
             case GuardMode::Chase:
-                next = nextStepToward(guard.pos, guard.lastKnownPlayer);
+                if (isInsideMap(guard.lastKnownPlayer) && tileAt(guard.lastKnownPlayer) == TileType::HideBox) {
+                    const auto standPoint = nearestWalkableAround(guard.lastKnownPlayer, guard.pos);
+                    next = standPoint ? nextStepToward(guard.pos, *standPoint) : std::nullopt;
+                } else {
+                    next = nextStepToward(guard.pos, guard.lastKnownPlayer);
+                }
                 break;
             case GuardMode::Search: {
                 auto pattern = searchPattern(guard.searchPivot);
@@ -614,6 +823,33 @@ void GameWidget::updateGuards() {
     }
 }
 
+void GameWidget::updateCameras() {
+    if (m_playerWon || m_playerCaught || m_playerHidden || m_respawnInvincibleFrames > 0) return;
+
+    bool spotted = false;
+    for (const auto& camera : m_cameras) {
+        if (!canCameraSeePlayer(camera)) continue;
+        spotted = true;
+        break;
+    }
+    if (!spotted) return;
+
+    const bool wasClear = (m_cameraAlertFrames == 0);
+    m_cameraAlertFrames = 45;
+    if (wasClear) m_audio.playAlert();
+
+    for (auto& guard : m_guards) {
+        if (guard.mode == GuardMode::Chase) continue;
+        guard.mode = GuardMode::Search;
+        guard.searchPivot = m_player;
+        guard.lastKnownPlayer = m_player;
+        guard.searchFrames = 90;
+        guard.searchIndex = 0;
+        guard.investigateDelayFrames = 0;
+        guard.moveCooldown = std::min(guard.moveCooldown, 4);
+    }
+}
+
 void GameWidget::updateDetection() {
     if (m_playerWon || m_playerCaught) return;
 
@@ -628,7 +864,7 @@ void GameWidget::updateDetection() {
         if (!m_playerHidden && std::abs(guard.pos.x - m_player.x) + std::abs(guard.pos.y - m_player.y) <= 2) nearSight = true;
     }
 
-    if (anyChase) {
+    if (anyChase || m_cameraAlertFrames > 0) {
         m_alertState = AlertState::Alerted;
         m_suspiciousFrames = 0;
     } else if (anySearch) {
@@ -656,7 +892,7 @@ void GameWidget::onPlayerCaught() {
     m_audio.playAlert();
     m_alertState = AlertState::Alerted;
     m_playerCaught = true;
-    m_caughtFlashFrames = 20;
+    m_caughtFlashFrames = 30;
 }
 
 void GameWidget::onPlayerReachedGoal() {
@@ -670,6 +906,10 @@ void GameWidget::onPlayerReachedGoal() {
 
 bool GameWidget::canSeePlayer(const Guard& guard) const {
     return canSeeFrom(guard.pos, guard.facing, 7, m_player);
+}
+
+bool GameWidget::canCameraSeePlayer(const Camera& camera) const {
+    return canSeeFrom(camera.pos, cameraFacing(camera), camera.range, m_player);
 }
 
 bool GameWidget::canSeeFrom(const Vec2& watcher, Direction facing, int range, const Vec2& target) const {
@@ -738,8 +978,38 @@ std::optional<GameWidget::Vec2> GameWidget::nextStepToward(const Vec2& start, co
     return cur;
 }
 
+std::optional<GameWidget::Vec2> GameWidget::noiseTarget() const {
+    const Vec2 d = dirToVec(m_playerFacing);
+    Vec2 target = m_player;
+    for (int i = 1; i <= 5; ++i) {
+        Vec2 candidate{m_player.x + d.x * i, m_player.y + d.y * i};
+        if (!isInsideMap(candidate) || tileAt(candidate) == TileType::Wall) break;
+        if (tileAt(candidate) != TileType::HideBox) target = candidate;
+    }
+    if (target == m_player) return std::nullopt;
+    return target;
+}
+
+std::optional<GameWidget::Vec2> GameWidget::nearestWalkableAround(const Vec2& pos, const Vec2& from) const {
+    const std::array<Vec2, 4> dirs = {{{1,0},{-1,0},{0,1},{0,-1}}};
+    std::optional<Vec2> best;
+    int bestScore = 1000000;
+    for (const auto& d : dirs) {
+        Vec2 candidate{pos.x + d.x, pos.y + d.y};
+        if (!isInsideMap(candidate) || tileAt(candidate) == TileType::Wall || tileAt(candidate) == TileType::HideBox) continue;
+        if (!nextStepToward(from, candidate)) continue;
+        const int score = std::abs(candidate.x - from.x) + std::abs(candidate.y - from.y);
+        if (!best || score < bestScore) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+    return best;
+}
+
 std::vector<GameWidget::Vec2> GameWidget::searchPattern(const Vec2& pivot) const {
     std::vector<Vec2> points;
+    if (isInsideMap(pivot) && tileAt(pivot) != TileType::Wall && tileAt(pivot) != TileType::HideBox) points.push_back(pivot);
     const std::array<Vec2, 8> offsets = {{{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1},{1,-1}}};
     for (const auto& o : offsets) {
         Vec2 p{pivot.x + o.x * 3, pivot.y + o.y * 3};
@@ -758,6 +1028,25 @@ void GameWidget::applyFacingFromStep(Guard& guard, const Vec2& next) {
     else if (dy < 0) guard.facing = Direction::Up;
 }
 
+GameWidget::Direction GameWidget::cameraFacing(const Camera& camera) const {
+    if (!camera.rotating) return camera.facing;
+
+    int base = 0;
+    switch (camera.facing) {
+        case Direction::Up: base = 0; break;
+        case Direction::Right: base = 1; break;
+        case Direction::Down: base = 2; break;
+        case Direction::Left: base = 3; break;
+    }
+    const int step = ((m_levelFrames + camera.phase) / std::max(1, camera.cycle)) % 4;
+    switch ((base + step) % 4) {
+        case 0: return Direction::Up;
+        case 1: return Direction::Right;
+        case 2: return Direction::Down;
+        default: return Direction::Left;
+    }
+}
+
 GameWidget::Vec2 GameWidget::dirToVec(Direction dir) const {
     switch (dir) {
         case Direction::Up: return {0, -1};
@@ -768,6 +1057,43 @@ GameWidget::Vec2 GameWidget::dirToVec(Direction dir) const {
     return {0, 0};
 }
 
+void GameWidget::makeNoise() {
+    if (m_noiseCooldown > 0 || m_playerHidden || m_playerWon || m_playerCaught) return;
+
+    const auto aim = noiseTarget();
+    if (!aim) return;
+    const Vec2 target = *aim;
+
+    m_noisePos = target;
+    m_noiseFrames = 150;
+    m_noiseCooldown = 110;
+    m_audio.playSuspicious();
+
+    for (auto& guard : m_guards) {
+        const int dist = std::abs(guard.pos.x - target.x) + std::abs(guard.pos.y - target.y);
+        if (dist > 26 || guard.mode == GuardMode::Chase) continue;
+        if (!nextStepToward(guard.pos, target)) continue;
+        guard.mode = GuardMode::Search;
+        guard.searchPivot = target;
+        guard.lastKnownPlayer = target;
+        guard.searchFrames = 210;
+        guard.searchIndex = 0;
+        guard.pendingNoiseTarget = target;
+        guard.investigateDelayFrames = 24 + std::min(dist, 24);
+        guard.moveCooldown = 0;
+    }
+
+    updateDetection();
+    updateStatusText();
+    update();
+}
+
+QString GameWidget::completedLabelForLevel(int index) const {
+    if (index >= 0 && index < (int)m_completedStats.size() && !m_completedStats[index].levelName.isEmpty()) {
+        return QString::fromUtf8(u8"已完成  %1").arg(m_completedStats[index].grade);
+    }
+    return QString::fromUtf8(u8"未完成");
+}
 
 QString GameWidget::formatFrames(int frames) const {
     const int totalSeconds = std::max(0, frames / 60);
@@ -785,11 +1111,11 @@ QString GameWidget::gradeFromScore(int score) const {
 }
 
 QString GameWidget::titleFromGrade(const QString& grade) const {
-    if (grade == "S") return "无声潜入者";
-    if (grade == "A") return "优秀特工";
-    if (grade == "B") return "合格潜入者";
-    if (grade == "C") return "仓促渗透者";
-    return "警报制造机";
+    if (grade == "S") return QString::fromUtf8(u8"无声潜入者");
+    if (grade == "A") return QString::fromUtf8(u8"优秀特工");
+    if (grade == "B") return QString::fromUtf8(u8"合格潜入者");
+    if (grade == "C") return QString::fromUtf8(u8"仓促渗透者");
+    return QString::fromUtf8(u8"警报制造机");
 }
 
 GameWidget::MissionStats GameWidget::makeCurrentMissionStats() const {
@@ -840,16 +1166,17 @@ void GameWidget::drawMissionResult(QPainter& p) {
     p.drawText(QRect(panel.left(), panel.top() + 24, panel.width(), 42), Qt::AlignCenter, "MISSION COMPLETE");
 
     p.setFont(QFont("Microsoft YaHei", 13, QFont::Bold));
-    p.drawText(QRect(panel.left() + 40, panel.top() + 86, panel.width() - 80, 28), Qt::AlignLeft, QString("关卡：%1 / %2  %3").arg(m_currentLevel + 1).arg((int)m_levels.size()).arg(stats.levelName));
+    p.drawText(QRect(panel.left() + 40, panel.top() + 86, panel.width() - 80, 28), Qt::AlignLeft,
+               QString::fromUtf8(u8"关卡: %1 / %2  %3").arg(m_currentLevel + 1).arg((int)m_levels.size()).arg(stats.levelName));
 
     p.setFont(QFont("Microsoft YaHei", 12));
     int y = panel.top() + 132;
     const int line = 32;
-    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("用时：%1").arg(formatFrames(stats.frames))); y += line;
-    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("步数：%1").arg(stats.steps)); y += line;
-    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("警戒次数：%1").arg(stats.alertCount)); y += line;
-    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("被抓次数：%1").arg(stats.caughtCount)); y += line;
-    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString("纸箱躲藏次数：%1").arg(stats.hideCount));
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString::fromUtf8(u8"用时: %1").arg(formatFrames(stats.frames))); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString::fromUtf8(u8"步数: %1").arg(stats.steps)); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString::fromUtf8(u8"警戒次数: %1").arg(stats.alertCount)); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString::fromUtf8(u8"被抓次数: %1").arg(stats.caughtCount)); y += line;
+    p.drawText(QRect(panel.left() + 56, y, 260, line), Qt::AlignLeft, QString::fromUtf8(u8"纸箱躲藏次数: %1").arg(stats.hideCount));
 
     p.setFont(QFont("Consolas", 64, QFont::Bold));
     p.setPen(stats.grade == "S" ? QColor(255, 240, 120) : QColor(170, 255, 210));
@@ -862,7 +1189,9 @@ void GameWidget::drawMissionResult(QPainter& p) {
 
     p.setFont(QFont("Microsoft YaHei", 11));
     p.setPen(QColor(180, 230, 190));
-    const QString nextText = (m_currentLevel + 1 < (int)m_levels.size()) ? "按 Enter 进入下一关，按 Esc 返回选关" : "按 Enter 查看最终总结算，按 Esc 返回选关";
+    const QString nextText = (m_currentLevel + 1 < (int)m_levels.size()) ?
+        QString::fromUtf8(u8"Enter 进入下一关    Esc 返回选关") :
+        QString::fromUtf8(u8"Enter 查看最终结算    Esc 返回选关");
     p.drawText(QRect(panel.left(), panel.bottom() - 58, panel.width(), 28), Qt::AlignCenter, nextText);
 }
 
@@ -887,39 +1216,45 @@ void GameWidget::drawFinalResult(QPainter& p) {
     const int averageScore = count > 0 ? totalScore / count : 0;
     const QString finalGrade = gradeFromScore(averageScore);
 
-    p.setFont(QFont("Consolas", 24, QFont::Bold));
+    p.setFont(QFont("Consolas", 28, QFont::Bold));
     p.setPen(QColor(220, 245, 255));
-    p.drawText(QRect(panel.left(), panel.top() + 22, panel.width(), 42), Qt::AlignCenter, "OPERATION COMPLETE");
+    p.drawText(QRect(panel.left(), panel.top() + 28, panel.width(), 48), Qt::AlignCenter, "MISSION COMPLETE");
 
     p.setFont(QFont("Microsoft YaHei", 12));
-    int y = panel.top() + 86;
+    int y = panel.top() + 96;
     for (int i = 0; i < (int)m_completedStats.size(); ++i) {
         const auto& s = m_completedStats[i];
         if (s.levelName.isEmpty()) continue;
         p.setPen(QColor(210, 245, 220));
         p.drawText(QRect(panel.left() + 46, y, panel.width() - 92, 28), Qt::AlignLeft,
-                   QString("%1. %2    %3  %4分  %5").arg(i + 1).arg(s.levelName).arg(s.grade).arg(s.score).arg(s.title));
-        y += 32;
+                   QString("%1. %2    %3    SCORE %4").arg(i + 1).arg(s.levelName).arg(s.grade).arg(s.score));
+        y += 30;
     }
 
-    y += 16;
-    p.setPen(QColor(180, 230, 255));
-    p.drawText(QRect(panel.left() + 46, y, 300, 28), Qt::AlignLeft, QString("总用时：%1").arg(formatFrames(totalFrames))); y += 30;
-    p.drawText(QRect(panel.left() + 46, y, 300, 28), Qt::AlignLeft, QString("总步数：%1").arg(totalSteps)); y += 30;
-    p.drawText(QRect(panel.left() + 46, y, 300, 28), Qt::AlignLeft, QString("总警戒：%1    总被抓：%2    总躲藏：%3").arg(totalAlerts).arg(totalCaught).arg(totalHide));
+    y += 18;
+    p.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
+    p.setPen(QColor(220, 245, 255));
+    p.drawText(QRect(panel.left() + 62, y, 330, 30), Qt::AlignLeft, QString::fromUtf8(u8"总步数: %1").arg(totalSteps)); y += 36;
+    p.drawText(QRect(panel.left() + 62, y, 330, 30), Qt::AlignLeft, QString::fromUtf8(u8"总警戒次数: %1").arg(totalAlerts)); y += 36;
+    p.drawText(QRect(panel.left() + 62, y, 330, 30), Qt::AlignLeft, QString::fromUtf8(u8"总用时: %1").arg(formatFrames(totalFrames))); y += 36;
+    p.drawText(QRect(panel.left() + 62, y, 330, 30), Qt::AlignLeft, QString::fromUtf8(u8"综合评价: %1").arg(finalGrade));
 
-    p.setFont(QFont("Consolas", 58, QFont::Bold));
+    p.setFont(QFont("Consolas", 72, QFont::Bold));
     p.setPen(finalGrade == "S" ? QColor(255, 240, 120) : QColor(160, 220, 255));
-    p.drawText(QRect(panel.right() - 210, panel.top() + 275, 160, 80), Qt::AlignCenter, finalGrade);
+    p.drawText(QRect(panel.right() - 225, panel.top() + 230, 170, 92), Qt::AlignCenter, finalGrade);
     p.setFont(QFont("Microsoft YaHei", 14, QFont::Bold));
     p.setPen(QColor(225, 245, 255));
-    p.drawText(QRect(panel.right() - 280, panel.top() + 358, 290, 36), Qt::AlignCenter, titleFromGrade(finalGrade));
+    p.drawText(QRect(panel.right() - 285, panel.top() + 328, 290, 36), Qt::AlignCenter, titleFromGrade(finalGrade));
     p.setFont(QFont("Consolas", 13, QFont::Bold));
-    p.drawText(QRect(panel.right() - 280, panel.top() + 396, 290, 28), Qt::AlignCenter, QString("AVERAGE SCORE %1").arg(averageScore));
+    p.drawText(QRect(panel.right() - 285, panel.top() + 366, 290, 28), Qt::AlignCenter, QString("AVERAGE SCORE %1").arg(averageScore));
 
-    p.setFont(QFont("Microsoft YaHei", 11));
+    p.setFont(QFont("Microsoft YaHei", 12));
     p.setPen(QColor(190, 225, 235));
-    p.drawText(QRect(panel.left(), panel.bottom() - 52, panel.width(), 28), Qt::AlignCenter, "按 Enter 或 Esc 返回选关");
+    p.drawText(QRect(panel.left(), panel.bottom() - 86, panel.width(), 28), Qt::AlignCenter, QString::fromUtf8(u8"感谢游玩"));
+    p.setFont(QFont("Consolas", 13, QFont::Bold));
+    p.drawText(QRect(panel.left(), panel.bottom() - 58, panel.width(), 28), Qt::AlignCenter, "NKU-26C-MGS-tribute");
+    p.setFont(QFont("Microsoft YaHei", 10));
+    p.drawText(QRect(panel.left(), panel.bottom() - 30, panel.width(), 22), Qt::AlignCenter, QString::fromUtf8(u8"Enter / Esc 返回选关"));
 }
 
 QString GameWidget::directionGlyph(Direction d) const {
@@ -934,26 +1269,43 @@ QString GameWidget::directionGlyph(Direction d) const {
 
 QString GameWidget::alertText() const {
     switch (m_alertState) {
-        case AlertState::Calm: return "正常";
-        case AlertState::Suspicious: return "警觉/搜索中";
-        case AlertState::Alerted: return "已暴露";
-        case AlertState::Victory: return "过关";
+        case AlertState::Calm: return QString::fromUtf8(u8"正常");
+        case AlertState::Suspicious: return QString::fromUtf8(u8"搜索中");
+        case AlertState::Alerted: return QString::fromUtf8(u8"警戒");
+        case AlertState::Victory: return QString::fromUtf8(u8"过关");
     }
-    return "未知";
+    return QString::fromUtf8(u8"未知");
 }
 
 void GameWidget::updateStatusText() {
-    if (!m_gameStarted) { emit statusChanged(QString("选关中：%1/%2 - %3 | 按 1-5 选关，Enter 开始") .arg(m_menuSelectedLevel + 1).arg((int)m_levels.size()).arg(m_levels[m_menuSelectedLevel].name)); return; }
-    if (m_introPanFrames > 0) { emit statusChanged(QString("开场镜头中：%1").arg(m_levels[m_currentLevel].name)); return; }
-    if (m_showFinalResult) { emit statusChanged("全部任务完成：最终总结算 | Enter/Esc 返回选关"); return; }
-    if (m_showMissionResult) { emit statusChanged("关卡完成：任务评价已生成 | Enter 继续，Esc 返回选关"); return; }
-    QString text = "任务代号: NKU-26C-MGS-tribute | ";
-    text += QString("关卡: %1/%2 | ").arg(m_currentLevel + 1).arg((int)m_levels.size());
-    text += QString("当前状态: %1 | ").arg(alertText());
-    text += QString("玩家坐标: (%1,%2) | ").arg(m_player.x).arg(m_player.y);
-    text += QString("步数: %1 | ").arg(m_stepCounter);
-    text += m_playerHidden ? "已躲藏于纸箱" : "暴露于场景中";
-    if (m_playerCaught) text += " | 已触发抓捕";
-    if (m_playerWon) text += " | 关卡完成";
-    emit statusChanged(text);
+    if (!m_gameStarted) {
+        emit statusChanged(QString::fromUtf8(u8"选关中: %1/%2 - %3 | 1-%4 或方向键选择，Enter 开始")
+                               .arg(m_menuSelectedLevel + 1)
+                               .arg((int)m_levels.size())
+                               .arg(m_levels[m_menuSelectedLevel].name)
+                               .arg((int)m_levels.size()));
+        return;
+    }
+    if (m_introPanFrames > 0) {
+        emit statusChanged(QString::fromUtf8(u8"开场镜头: %1 | Enter/Space 跳过").arg(m_levels[m_currentLevel].name));
+        return;
+    }
+    if (m_showFinalResult) {
+        emit statusChanged(QString::fromUtf8(u8"全部任务完成 | Enter/Esc 返回选关"));
+        return;
+    }
+    if (m_showMissionResult) {
+        emit statusChanged(QString::fromUtf8(u8"关卡完成 | Enter 继续，Esc 返回选关"));
+        return;
+    }
+    QString statusText = QString::fromUtf8(u8"任务代号: NKU-26C-MGS-tribute | ");
+    statusText += QString::fromUtf8(u8"关卡: %1/%2 | ").arg(m_currentLevel + 1).arg((int)m_levels.size());
+    statusText += QString::fromUtf8(u8"状态: %1 | ").arg(alertText());
+    statusText += QString::fromUtf8(u8"玩家坐标: (%1,%2) | ").arg(m_player.x).arg(m_player.y);
+    statusText += QString::fromUtf8(u8"步数: %1 | ").arg(m_stepCounter);
+    statusText += QString::fromUtf8(u8"声响: %1 | ").arg(m_noiseCooldown > 0 ? QString::number((m_noiseCooldown + 59) / 60) + "s" : QString::fromUtf8(u8"可用"));
+    statusText += (m_playerHidden ? QString::fromUtf8(u8"已躲藏于纸箱") : QString::fromUtf8(u8"暴露"));
+    if (m_playerCaught) statusText += QString::fromUtf8(u8" | 被抓");
+    if (m_playerWon) statusText += QString::fromUtf8(u8" | 过关");
+    emit statusChanged(statusText);
 }
