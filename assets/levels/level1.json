@@ -1,4 +1,4 @@
-{
+﻿{
     "name":  "Harbor Checkpoint",
     "width":  96,
     "height":  56,
@@ -453,5 +453,6 @@
                         "cycle":  140,
                         "phase":  35
                     }
-                ]
+                ],
+    "briefing":  "任务目标：潜入港口检查站，绕开巡逻队，抵达撤离点。"
 }

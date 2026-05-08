@@ -10,9 +10,12 @@
         <file>assets/audio/bgm.wav</file>
         <file>assets/audio/step.wav</file>
         <file>assets/audio/alert.wav</file>
+        <file>assets/audio/mgs_alert_custom.wav</file>
+        <file>assets/audio/mgs_alert.mp3</file>
         <file>assets/audio/suspicious.wav</file>
         <file>assets/audio/clear.wav</file>
         <file>assets/audio/level_start.wav</file>
+        <file>assets/audio/tranquilizer.wav</file>
         <file>assets/levels/level1.json</file>
         <file>assets/levels/level2.json</file>
         <file>assets/levels/level3.json</file>

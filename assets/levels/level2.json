@@ -1,4 +1,4 @@
-{
+﻿{
     "name":  "Warehouse Maze",
     "width":  106,
     "height":  62,
@@ -507,5 +507,6 @@
                         "cycle":  80,
                         "phase":  20
                     }
-                ]
+                ],
+    "briefing":  "任务目标：穿过仓库迷宫，利用纸箱和噪音避开密集巡逻。"
 }

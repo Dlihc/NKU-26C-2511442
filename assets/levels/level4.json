@@ -1,4 +1,4 @@
-{
+﻿{
     "name":  "Drainage Line",
     "width":  118,
     "height":  70,
@@ -362,6 +362,30 @@
                   [
                       62,
                       56
+                  ],
+                  [
+                      54,
+                      34
+                  ],
+                  [
+                      67,
+                      39
+                  ],
+                  [
+                      92,
+                      43
+                  ],
+                  [
+                      100,
+                      23
+                  ],
+                  [
+                      103,
+                      18
+                  ],
+                  [
+                      106,
+                      31
                   ]
               ],
     "guards":  [
@@ -573,36 +597,53 @@
     "cameras":  [
                     {
                         "pos":  [
-                                    57,
+                                    69,
                                     36
                                 ],
-                        "facing":  "Right",
-                        "range":  8,
+                        "facing":  "Down",
+                        "range":  5,
                         "rotating":  true,
-                        "cycle":  110,
+                        "cycle":  70,
                         "phase":  0
                     },
                     {
                         "pos":  [
-                                    90,
-                                    44
+                                    94,
+                                    42
                                 ],
-                        "facing":  "Left",
-                        "range":  7,
+                        "facing":  "Down",
+                        "range":  6,
                         "rotating":  true,
-                        "cycle":  85,
+                        "cycle":  60,
                         "phase":  20
                     },
                     {
                         "pos":  [
-                                    106,
-                                    18
+                                    99,
+                                    22
                                 ],
-                        "facing":  "Down",
-                        "range":  7,
+                        "facing":  "Left",
+                        "range":  5,
                         "rotating":  true,
-                        "cycle":  115,
+                        "cycle":  75,
                         "phase":  50
                     }
-                ]
+                ],
+    "keys":  [
+                 {
+                     "y":  20,
+                     "id":  "A",
+                     "x":  100
+                 }
+             ],
+    "doors":  [
+                  {
+                      "y":  16,
+                      "w":  9,
+                      "h":  4,
+                      "id":  "A",
+                      "x":  104
+                  }
+              ],
+    "briefing":  "任务目标：取得 A 钥匙，打开排水线门禁后前往出口。"
 }

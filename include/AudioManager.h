@@ -3,6 +3,7 @@
 #include <QMediaPlayer>
 #include <QAudioOutput>
 #include <QSoundEffect>
+#include <QElapsedTimer>
 class AudioManager : public QObject {
     Q_OBJECT
 public:
@@ -14,6 +15,7 @@ public:
     void playSuspicious();
     void playClear();
     void playLevelStart();
+    void playTranquilizer();
 private:
     QMediaPlayer m_bgmPlayer;
     QAudioOutput m_bgmOutput;
@@ -22,4 +24,6 @@ private:
     QSoundEffect m_suspiciousEffect;
     QSoundEffect m_clearEffect;
     QSoundEffect m_levelStartEffect;
+    QSoundEffect m_tranquilizerEffect;
+    QElapsedTimer m_alertTimer;
 };
